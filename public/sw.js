@@ -1,0 +1,9 @@
+const CACHE='next-set-shell-v2';
+self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',event=>event.waitUntil((async()=>{for(const key of await caches.keys())if(key.startsWith('next-set-shell-')&&key!==CACHE)await caches.delete(key);await self.clients.claim()})()));
+function asset(url){return url.origin===self.location.origin&&(/\.(js|css|svg|woff2)$/.test(url.pathname))&&!url.pathname.startsWith('/api/')}
+self.addEventListener('message',event=>{if(event.data?.type==='CACHE_ASSETS')event.waitUntil((async()=>{const cache=await caches.open(CACHE);const urls=[...new Set(event.data.urls||[])].filter(x=>{try{return asset(new URL(x))}catch{return false}});await Promise.allSettled(urls.map(async u=>{const r=await fetch(u);if(r.ok&&!r.redirected)await cache.put(u,r)}));try{const response=await fetch('/');if(response.ok&&!response.redirected&&(await response.clone().text()).includes('id="next-set-shell"'))await cache.put('/',response)}catch{}})())});
+self.addEventListener('fetch',event=>{const url=new URL(event.request.url);if(event.request.method!=='GET'||url.origin!==self.location.origin||url.pathname.startsWith('/api/')||['/signin-with-chatgpt','/signout-with-chatgpt','/callback'].some(p=>url.pathname.startsWith(p)))return;
+ if(event.request.mode==='navigate'&&url.pathname==='/'){event.respondWith((async()=>{const cache=await caches.open(CACHE);try{const r=await fetch(event.request);if(r.ok&&!r.redirected&&(await r.clone().text()).includes('id="next-set-shell"'))await cache.put('/',r.clone());return r}catch{return await cache.match('/')||new Response('Open Next Set online once before using it offline.',{status:503})}})());return}
+ if(asset(url))event.respondWith((async()=>{const cache=await caches.open(CACHE),cached=await cache.match(event.request);if(cached)return cached;const r=await fetch(event.request);if(r.ok&&!r.redirected)await cache.put(event.request,r.clone());return r})());
+});
