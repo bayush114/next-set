@@ -1,0 +1,8 @@
+import{test}from'node:test';import assert from'node:assert/strict';import{blank,validate,key,merge,rank,upcoming,csv}from'../frontend/model.mjs';
+const job=()=>({...blank(),company:'Example',title:'Backend Engineer',location:'NYC',salary_max:200000});
+test('validation rejects invalid stage, unsafe URL, salary and dates',()=>{for(const patch of[{stage:'Fake'},{url:'javascript:alert(1)'},{salary_min:300000},{due:'2026-11-01T10:00'}])assert.throws(()=>validate({...job(),...patch}));assert.equal(validate(job()).company,'Example')});
+test('duplicates normalize url tracking params and whitespace',()=>{assert.equal(key({...job(),url:'https://example.com/job?ref=one'}),key({...job(),url:'https://example.com/job?ref=two'}));assert.equal(merge([job()],[job()]).length,1)});
+test('invalid batch never mutates existing collection',()=>{const existing=[job()];assert.throws(()=>merge(existing,[{...job(),company:'Other'},{...job(),stage:'Fake'}]));assert.equal(existing.length,1)});
+test('rank penalizes seniority and clearance, does not invent pay',()=>{assert.equal(rank(job()).score,85);assert.equal(rank({...job(),title:'Senior Platform Engineer',description:'8 years and security clearance'}).score,0);assert.ok(rank({...job(),salary_max:null}).reasons.includes('Comparable USD pay unknown'))});
+test('attention includes overdue but excludes closed jobs',()=>{assert.ok(upcoming({...job(),due:'2026-01-01T00:00:00Z'},Date.parse('2026-10-01')));assert.equal(upcoming({...job(),stage:'Rejected',due:'2026-01-01T00:00:00Z'},Date.parse('2026-10-01')),false)});
+test('CSV escapes quotes and spreadsheet formulas',()=>{const out=csv([{...job(),company:'=SUM(A1)',notes:'A "quote"'}]);assert.ok(out.includes("'=SUM"));assert.ok(out.includes('A ""quote""'))});

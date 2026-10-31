@@ -1,45 +1,55 @@
-# Next Set
-A minimal workout tracker with a real account-scoped backend, offline queue, reusable routines, explainable progression suggestions, and progress charts.
+# Job Compass
 
-## Features
-- Prefilled sets and one-tap completion, with editable weights and reps.
-- Saved routines plus optional Push/Pull/Legs starting templates.
-- Immutable session history and repeat-with-suggestions actions.
-- Configurable target reps and weight increments. Suggestions require every planned set to be completed at target, at a consistent weight. Nothing is increased automatically.
-- Body-weight, daily training-volume, and exercise-weight charts with accessible value tables.
-- ChatGPT sign-in, D1 persistence, per-user authorization, and account-specific IndexedDB storage.
-- Offline application shell and queued writes, retried while the app is open and connected.
-- JSON import/export and explicit migration of original `next-set-v1` localStorage data.
+A job-search workspace: ranked inbox, application board, interview dates, follow-up queue, preparation notes, compensation notes, stage history, JSON backups and CSV export. React/TypeScript UI with a FastAPI/SQLAlchemy backend and PostgreSQL deployment configuration.
 
-## Stack
-React, TypeScript, Vinext/Vite, Cloudflare Workers, D1/SQLite, Drizzle migrations, IndexedDB, and a service worker. Hosted authentication is supplied by Sites; authentication secrets are not stored in this repository.
+## Two operating modes
 
-## Local development
-Use Node 22.13+ (Node 24 for the included SQLite tests) and pnpm.
+The hosted Sites edition uses **browser localStorage**. It is usable for manual tracking and backup import/export; it does not synchronize devices or run ingestion. It starts empty; optional sample companies are fictional.
 
-1. `pnpm install --frozen-lockfile`
-2. `pnpm build`
-3. Apply `drizzle/0000_chilly_tag.sql` locally using the command below.
-4. `pnpm dev`
+The Docker edition serves the same UI and authenticated API from one origin. It uses PostgreSQL and adds Greenhouse ingestion with bounded retries, deduplication, run history and optimistic concurrency checks. This is a single-user app. Do not expose it publicly without TLS and proper account authentication.
+
+## Run with PostgreSQL
+
+Requires Docker Compose. Create an untracked `.env` with random URL-safe values:
 
 ```
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_chilly_tag.sql
+POSTGRES_PASSWORD=replace-with-long-random-hex-value
+APP_TOKEN=replace-with-another-long-random-hex-value
 ```
 
-Managed preview uses platform auth; without a signed-in identity, the UI works in local mode. Portable loopback development can use the starter's development sign-in. Never trust user-supplied identity headers on a publicly exposed standalone server; production depends on Sites validating and injecting them.
+Run `docker compose up --build`. Open `http://localhost:8000`, go to Settings and enter your APP_TOKEN to connect. The port is bound to loopback. Secrets are not shipped in this repository. PostgreSQL persists in the `jobs-data` volume. Initial tables are created on startup; schema migration tooling is a follow-up requirement before future schema changes.
+
+## Run without Docker
+
+```
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+npm ci
+npm run build
+```
+
+Set APP_TOKEN to a random value in your shell. Optionally set DATABASE_URL to a PostgreSQL SQLAlchemy URL; otherwise a local SQLite file is used. Run `.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000`.
+
+## Ingestion
+
+Connect the server, open Sources and enter a company's Greenhouse board slug. The backend fetches only `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true`; arbitrary URL inputs are rejected. It validates the whole response, inserts new jobs transactionally, skips existing source IDs, and never overwrites your notes/stage. Failed requests are recorded and do not mark roles closed. Up to three attempts cover network errors, 429 and selected 5xx responses. Ingestion runs synchronously in a server worker thread; an interrupted process may leave a run marked running. There is no background schedule or automatic application submission.
+
+## Ranking
+
+Rule-based, with visible explanations: engineering title, backend/platform terms, preferred location and a stated USD pay ceiling of $180k. Senior titles, mentions of >3 years and clearance language lower scores. Salary is not inferred from prose, base is not equated with total compensation, and eligibility requires human review. Ranking is not AI-generated.
 
 ## Validation
-- `node node_modules/typescript/bin/tsc --noEmit`
-- `node scripts/test.mjs`
-- `pnpm build`
 
-Tests exercise validation, progression edge cases, immutable merging, SQLite-backed idempotency, pagination, cross-origin rejection and per-user isolation.
+```
+.venv/bin/python -m pytest -q
+npm test
+npm run build
+```
 
-## Sync design
-The local IndexedDB transaction adds immutable records and outbox IDs together. The server uses a unique `(user_id, record_id)` index. Retrying an accepted upload is safe. Pulls use a sequence cursor, scoped to the authenticated account. Saving a revised routine creates another template rather than overwriting other devices' versions. Unfinished workouts remain device-local. Sync checks account identity before uploading; switching accounts never merges data silently.
+Backend tests cover auth, validation, persistence, duplicate submissions, stale edits, history, ingestion deduplication, retries, failures and source URL restrictions. Frontend model tests cover validation, backup deduplication, ranking, follow-ups and CSV formula escaping. API integration tests use isolated SQLite databases; Docker/PostgreSQL is not validated in this environment. Browser QA covers creating/editing opportunities, persistence, board, search and filters. No production personal records are included.
 
-## Limits
-Cloud sync requires sign-in and connectivity. Automatic retries run while the app is open, not as guaranteed OS background tasks. Offline reopening requires a successful online load and service-worker activation. Clearing browser storage removes unuploaded data. Local-mode logs are separate from signed-in records; use export/import to move them. Charts use UTC dates for aggregation. This version does not include history deletion or editing, kg units, or automatic conflict resolution for editable sessions because saved sessions are immutable.
+## Current limits
 
-## Privacy and deployment
-API responses are never cached by the service worker. Cached HTML contains no account identity or workout data; device records live in account-specific IndexedDB buckets. Signing out removes the remembered offline account pointer. The hosted Site remains owner-private until explicitly shared. `.openai/hosting.json` declares the Site identity and D1 binding and contains no secret.
+No email/calendar synchronization, automatic applications, paid services, scraping behind logins, multi-user accounts, server-side backup import, or notification delivery. Browser and server datasets remain separate. Back up before clearing browser storage. Follow-up dates drive the Focus view; they do not send reminders.
+
+![Job Compass with fictional sample data](docs/screenshot.jpg)

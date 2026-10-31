@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: jobs
+      POSTGRES_USER: jobs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: [jobs-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U jobs]
+      interval: 5s
+      retries: 10
+  app:
+    build: .
+    ports: ['127.0.0.1:8000:8000']
+    environment:
+      DATABASE_URL: postgresql+psycopg://jobs:${POSTGRES_PASSWORD}@db/jobs
+      APP_TOKEN: ${APP_TOKEN:?Set APP_TOKEN}
+    depends_on:
+      db: {condition: service_healthy}
+volumes:
+  jobs-data:
