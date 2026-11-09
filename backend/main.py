@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import create_engine, Column, String, Integer, Text, select, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Session
 from sqlalchemy.exc import IntegrityError
+from backend.radar import discover, evidence
 
 STAGES=['Saved','Applied','Screen','Interview','Offer','Rejected','Withdrawn']
 def now(): return datetime.now(timezone.utc).isoformat()
@@ -42,6 +43,10 @@ class JobInput(BaseModel):
   return self
 class Edit(JobInput): version:int=Field(ge=1)
 class Ingest(BaseModel): board:str=Field(pattern=r'^[a-zA-Z0-9_-]{1,80}$')
+class RadarImport(BaseModel):
+ url:str=Field(max_length=2000)
+ title:str=Field(default='Hiring post',max_length=200)
+ text:str=Field(min_length=10,max_length=12000)
 
 def key(d):
  if d['source_id']:return d['source'].lower()+':'+d['source_id']
@@ -95,6 +100,7 @@ def create_app(url=None,token=None):
   d=data.model_dump(exclude={'version'});d.update(created_at=old['created_at'],updated_at=now(),history=old['history'])
   if d['stage']!=old['stage']:d['history'].append({'at':now(),'stage':d['stage']})
   d['rank']=rank(d)
+  if 'radar' in old:d['radar']=old['radar']
   result=s.query(Job).filter(Job.id==id,Job.version==data.version).update({'payload':json.dumps(d),'dedup':key(d),'version':data.version+1})
   if not result:s.rollback();raise HTTPException(409,'Concurrent edit; reload')
   try:s.commit()
@@ -138,6 +144,39 @@ def create_app(url=None,token=None):
   except Exception as exc:
    s.rollback();report.update(status='failed',added=0,error=str(exc)[:500])
   report['finished_at']=now();row=s.get(Run,report['id']);row.payload=json.dumps(report);s.commit();return report
+ def save_leads(leads,s):
+  added=0;existing=0
+  for lead in leads:
+   d=JobInput(company='Employer unverified',title=lead['title'],url=lead['url'],description=lead['text'],source='linkedin',source_id=lead['url'].split('activity:')[-1].strip('/'),notes='Recruiter Radar: search evidence only. Verify the opening before applying.',next_action='Read post and verify employer opening').model_dump()
+   if s.scalar(select(Job).where(Job.dedup==key(d))):existing+=1;continue
+   d.update(created_at=now(),updated_at=now(),history=[{'at':now(),'stage':'Saved'}],radar=lead);d['rank']=rank(d)
+   try:
+    with s.begin_nested():
+     s.add(Job(id=str(uuid.uuid4()),dedup=key(d),payload=json.dumps(d),version=1));s.flush()
+    added+=1
+   except IntegrityError:existing+=1
+  return added,existing
+ @app.get('/api/radar',dependencies=[Depends(auth)])
+ def radar(s:Session=Depends(db)):
+  return [view(x) for x in s.scalars(select(Job)) if json.loads(x.payload).get('source')=='linkedin']
+ @app.post('/api/radar/import',dependencies=[Depends(auth)])
+ def radar_import(data:RadarImport,s:Session=Depends(db)):
+  try:lead=evidence(data.model_dump(),days=3650)
+  except (ValueError,OverflowError,OSError):raise HTTPException(422,'Use a valid public LinkedIn hiring post URL containing its activity ID')
+  if not lead:raise HTTPException(422,'Post must contain an engineering/data hiring signal and a plausible date')
+  added,existing=save_leads([lead],s);s.commit();return {'added':added,'existing':existing}
+ @app.post('/api/radar/scan',dependencies=[Depends(auth)])
+ def radar_scan(s:Session=Depends(db)):
+  report={'id':str(uuid.uuid4()),'board':'LinkedIn Recruiter Radar','started_at':now(),'status':'running','added':0,'existing':0,'attempts':1,'error':None}
+  row=Run(id=report['id'],payload=json.dumps(report));s.add(row);s.commit()
+  try:
+   result=discover();added,existing=save_leads(result.pop('leads'),s)
+   report.update(result,added=added,existing=existing,status=('failed' if len(result['errors'])==6 else 'partial') if result['errors'] else 'succeeded')
+   if result['errors']:report['error']='Some search requests failed; coverage is incomplete.'
+   s.commit()
+  except Exception:
+   s.rollback();report.update(status='failed',added=0,error='Scan failed; existing records preserved.')
+  report['finished_at']=now();s.get(Run,report['id']).payload=json.dumps(report);s.commit();return report
  if os.path.isdir('dist'):app.mount('/',StaticFiles(directory='dist',html=True),name='frontend')
  return app
 app=create_app()

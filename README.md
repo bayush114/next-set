@@ -53,3 +53,52 @@ Backend tests cover auth, validation, persistence, duplicate submissions, stale 
 No email/calendar synchronization, automatic applications, paid services, scraping behind logins, multi-user accounts, server-side backup import, or notification delivery. Browser and server datasets remain separate. Back up before clearing browser storage. Follow-up dates drive the Focus view; they do not send reminders.
 
 ![Job Compass with fictional sample data](docs/screenshot.jpg)
+
+## Recruiter Radar
+
+The **Radar** tab adds a separate inbox for public LinkedIn hiring-post evidence.
+Connect the private API, then scan or paste a public post URL and its text.
+Posts persist in the existing jobs table as JSON payloads; no table migration is
+needed. Editing a saved opportunity preserves its original radar evidence.
+Activity IDs normalize country domains, tracking parameters and alternate URLs
+into one source ID, so repeated scans preserve notes and application stages.
+
+Discovery runs six queries across SWE, ML/AI, MLOps and data roles. It defaults
+to Bing's public RSS search endpoint (no key). Optionally set
+`BRAVE_SEARCH_API_KEY` server-side to use Brave Search's API instead; that service
+requires your own credential and may charge for requests. Never put this key in
+the frontend or commit it. Search requests have bounded retries and timeouts.
+A failed query is recorded as incomplete coverage rather than a negative finding.
+
+**Coverage limitation:** a live Bing RSS smoke check in this implementation
+returned HTTP 200 with zero items. Public web search found LinkedIn hiring posts,
+but that does not establish that Bing will return them. Brave integration is
+covered by the adapter design, not a live credentialed verification. Treat the
+free provider as best-effort. Manual post capture is available when indexing
+misses something. LinkedIn profile fetches may return status 999; this app never
+tries to bypass login, scrape a signed-in feed or send outreach automatically.
+
+Dates are decoded from LinkedIn activity IDs, independent of search crawl dates;
+a repost's underlying vacancy may still be older. Automatic scans retain posts
+up to 14 days old, and filter to hiring and engineering/data language. Fit scores
+are transparent triage heuristics, not eligibility checks. Search snippets do
+not establish employer identity, compensation or whether a job remains open;
+those remain explicitly unverified until you review the original post/employer.
+The app does not automatically resolve employer career links or generate outreach.
+
+To run automatic scans every six hours alongside the private server:
+
+```sh
+docker compose --profile radar up --build -d
+```
+
+The optional worker stores results and scan history through the authenticated
+API. It requires an always-running Docker host. It does not run on the static
+Sites edition or send notifications. For a non-Docker server, set
+`RADAR_API_ORIGIN=http://127.0.0.1:8000`, `APP_TOKEN`, and optionally
+`RADAR_INTERVAL_SECONDS` (minimum 3600), then run
+`python -m backend.radar_worker`. Only start one worker per deployment.
+
+Validation covers source URL restrictions, encoded dates/staleness, duplicate
+posts, preserved notes/evidence, authentication, and visible search failures.
+Docker scheduling and live Brave retrieval require deployment-side validation.

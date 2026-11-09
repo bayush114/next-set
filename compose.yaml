@@ -16,7 +16,18 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://jobs:${POSTGRES_PASSWORD}@db/jobs
       APP_TOKEN: ${APP_TOKEN:?Set APP_TOKEN}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
     depends_on:
       db: {condition: service_healthy}
+  radar-worker:
+    build: .
+    profiles: [radar]
+    command: [python, -m, backend.radar_worker]
+    restart: unless-stopped
+    environment:
+      APP_TOKEN: ${APP_TOKEN:?Set APP_TOKEN}
+      RADAR_API_ORIGIN: http://app:8000
+      RADAR_INTERVAL_SECONDS: '21600'
+    depends_on: [app]
 volumes:
   jobs-data:
